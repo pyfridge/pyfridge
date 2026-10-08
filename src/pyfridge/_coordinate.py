@@ -320,20 +320,22 @@ def fit_fridge(X, y, m=1, lam=0.1, *, weights=None, adaptive=True, gamma=1.0,
     The penalty is applied in working units after preprocessing; returned
     coefficients and predictions are in the original units.
     """
-    if warn and 0 < m < p and lam > 0:
-    warnings.warn(
-        "Single-lambda Fridge optimization may converge to a suboptimal "
-        "local minimum. Consider using path_fridge() to fit a regularization "
-        "path and extract the solution at the desired lambda.",
-        UserWarning,
-        stacklevel=2,
-    )
-
     # 1. Preprocess the data and validate model and solver parameters.
     X, y, scaling = prepare(X, y, fit_intercept, standardize, scale_y)
     p = X.shape[1]
     m = validate_m(m, p)
     lam = nonnegative(lam, "lam")
+    
+    # Evaluate the single-fit warning after validating p, m, and lam.
+    if warn and 0 < m < p and lam > 0:
+        warnings.warn(
+            "Single-lambda Fridge optimization may converge to a suboptimal "
+            "local minimum. Consider using path_fridge() to fit a regularization "
+            "path and extract the solution at the desired lambda.",
+            UserWarning,
+            stacklevel=2,
+        )
+
     tau = nonnegative(tau, "tau")
     tol = nonnegative(tol, "tol", positive=True)
     zero_tol = nonnegative(zero_tol, "zero_tol")
