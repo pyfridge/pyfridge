@@ -1,0 +1,5 @@
+include README.md
+include example/riboflavin.ipynb
+recursive-include src *.pyx
+prune refs
+global-exclude .DS_Store *.csv *.pkl *.npy *.npz

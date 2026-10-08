@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel", "Cython>=3.0", "numpy>=1.23"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyfridge"
+version = "0.1.0"
+description = "Fridge regression by coordinate descent and predictor-corrector solution paths"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.23", "scipy>=1.9"]
+
+[project.optional-dependencies]
+# Optional Matplotlib support for plotting; include it in plotting tests.
+plot = ["matplotlib>=3.6"]
+# Dependencies for the web-loaded riboflavin reproduction notebook.
+example = ["matplotlib>=3.6", "pandas>=2", "scikit-learn>=1.2",
+           "pysusie>=0.1", "jupyterlab>=4", "nbformat>=5", "nbclient>=0.8"]
+test = ["pytest>=7", "scikit-learn>=1.2", "matplotlib>=3.6"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pyfridge = ["*.pyx"]
+
+[tool.pytest.ini_options]
+testpaths = ["refs/tests"]

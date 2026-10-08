@@ -1,0 +1,28 @@
+/*
+!/.gitignore
+!/README.md
+!/MANIFEST.in
+!/pyproject.toml
+!/setup.py
+!/src/
+!/example/
+
+# Keep the example directory limited to its public notebook.
+/example/*
+!/example/riboflavin.ipynb
+
+# Never track generated artifacts or downloaded datasets.
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.DS_Store
+.ipynb_checkpoints/
+*.csv
+*.pkl
+*.npy
+*.npz
+/src/pyfridge/_cd_fast.c
