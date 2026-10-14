@@ -65,7 +65,7 @@ class FridgeCV:
         return self.fit_.predict(X)
 
 
-def cv_fridge(X, y, ms=(0, 1, 2), lambdas=None, *, n_steps=30,
+def cv_fridge(X, y, ms=(0, 1, 2), lambdas=None, *, n_steps=100,
                    n_folds=5, random_state=42, selection="1se", method="smooth",
                    **fit_options):
     """Select Fridge target size and regularization using shuffled cross-validation.
@@ -83,10 +83,11 @@ def cv_fridge(X, y, ms=(0, 1, 2), lambdas=None, *, n_steps=30,
         Finite nonnegative Fridge penalty parameters in working units. For method="smooth", 
         values must be strictly increasing; method="cd" accepts any order. Explicit grids 
         are evaluated in full. None generates a geometric grid.
-    n_steps : int, default=30
+    n_steps : int, default=100
         Positive number of intervals in an automatic grid, normally giving n_steps+1
         points. Degenerate grids may contain one point; smooth stopping can shorten
-        paths. Ignored for explicit lambdas.
+        paths. Automatic full-data refits use 100 intervals, inserting the
+        selected lambda when needed. Ignored for explicit lambdas.
     n_folds : int, default=5
         Number of shuffled folds, between 2 and n_samples.
     random_state : int, numpy.random.Generator or None, default=42
@@ -160,8 +161,9 @@ def cv_fridge(X, y, ms=(0, 1, 2), lambdas=None, *, n_steps=30,
         Positive starting multiplier for automatic grids. None uses
         1e-6/(n_samples*max(m,1)); ignored for explicit lambdas.
     lambda_max : float or None, default=None
-        Nonnegative endpoint for automatic grids. None uses a score-based heuristic; for
-        m>0 this is not a guaranteed all-zero-fit bound. Ignored for explicit lambdas.
+        Nonnegative endpoint for automatic grids. None uses the endpoint
+        heuristic described in path_fridge (unit weights and beta=0.001 for m>0). For m>0 this is not a guaranteed
+        support-size bound. Ignored for explicit lambdas.
 
     Returns
     -------
@@ -181,6 +183,8 @@ def cv_fridge(X, y, ms=(0, 1, 2), lambdas=None, *, n_steps=30,
 
     Automatic lambda grids are constructed using full-data working scales. The
     global one-SE threshold is the minimum mean fold MSE plus its standard error.
+    Automatic final refits use a finer grid; approximate smooth solutions can
+    therefore differ from fits traced on the CV grid at the same lambda.
     """
 
     # Validate independent data arrays and candidate sizes before allocating folds.
@@ -245,7 +249,14 @@ def cv_fridge(X, y, ms=(0, 1, 2), lambdas=None, *, n_steps=30,
             path = path_fridge(X[train], y[train], m, grid, method=method, **fit_options)
 
             # Broadcast y across path columns to compute a separate held-out MSE for every lambda.
-            errors.append(np.mean((path.predict(X[test]) - y[test, None]) ** 2, axis=0))
+            # ##### IMPROVEMENT: Evaluate each distinct consecutive fit once.
+            # Expand repeated predictions back to the full common lambda grid;
+            # every fold still contributes to every mean and standard error.
+            changed = np.r_[True, np.any(path.coef_path_[1:] != path.coef_path_[:-1], axis=1)
+                            | (path.intercepts_[1:] != path.intercepts_[:-1])]
+            predictions = path.predict(X[test], index=np.flatnonzero(changed))
+            unique_mse = np.mean((predictions - y[test, None]) ** 2, axis=0)
+            errors.append(unique_mse[np.cumsum(changed) - 1])
             convergence.append(path.converged_)
             stationarity.append(path.kkt_residuals_)
 
@@ -276,15 +287,20 @@ def cv_fridge(X, y, ms=(0, 1, 2), lambdas=None, *, n_steps=30,
     # Both selection rules are reported; this choice determines the returned fitted model.
     chosen_m, chosen_lambda = (best_m, best_lambda) if selection == "min" else (one_m, one_lambda)
     
-    # Running CD here after smooth CV would change the selected fitting procedure.
-    full_path = full_paths.get(chosen_m)
-    if full_path is None:
+    # Refit automatic searches on 100 intervals. Include the CV-selected lambda 
+    # exactly rather than substituting a nearby grid value. Different continuation 
+    # spacing can change the approximate full-data fit.
+    if lambdas is None:
+        cv_grid = results[chosen_m]["lambdas"]
+        refit_grid = (np.geomspace(cv_grid[0], cv_grid[-1], 101)
+                      if len(cv_grid) > 1 else cv_grid.copy())
+        refit_grid = np.unique(np.append(refit_grid, chosen_lambda))
+        full_path = path_fridge(X, y, chosen_m, refit_grid, method=method, **fit_options)
+    else:
+        # Preserve explicitly requested grids without densifying.
         full_path = path_fridge(X, y, chosen_m, results[chosen_m]["lambdas"],
                                 method=method, **fit_options)
-
-    # 4. Extract exactly the selected point from the same full-data algorithm and grid.
-    # Its objective history contains only that point, not a new CD trajectory.
-    chosen_index = best_index if selection == "min" else int(one_index)
+    chosen_index = int(np.flatnonzero(full_path.lambdas_ == chosen_lambda)[0])
     fit = FridgeResult(
         coef_=full_path.coef_path_[chosen_index].copy(),
         intercept_=float(full_path.intercepts_[chosen_index]),

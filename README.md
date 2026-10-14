@@ -153,15 +153,17 @@ plt.show()
 
 `plot_cv_fridge` displays every candidate `m`, marks the minimum and one-SE selections, and shows the global threshold. `show_se=False` hides the standard-error bands; these bands are not confidence intervals.
 
+Both plots hide confirmed flat trailing segments by default (relative tolerance `1e-6`, requiring five consecutive small changes). For solution paths, every displayed coefficient must be flat. Pass `trim_flat=False` to either function to display the full curves. Trimming does not change fitted results or CV selection.
+
 Both functions accept an existing Matplotlib `ax` and return it. They never refit models or call `show`. Positive lambda grids use a log-scale axis by default; grids containing zero can use an appropriate symmetric log axis. Set `xscale="linear"` when preferred.
 
 ## Reproducing riboflavin example
 
-The example is in [example/riboflavin.ipynb](example/riboflavin.ipynb). It downloads the dataset directly from the public CRAN `hdi` mirror, then runs Fridge, adaptive Lasso, SCAD, and SuSiE, followed by gene-level and correlation-group comparisons. This includes ten-fold CV and the paper-tuned Fridge path, with an optional 500-resample fixed-tuning bootstrap enabled.
+The example is in [example/riboflavin.ipynb](example/riboflavin.ipynb). It downloads the dataset directly from the public CRAN `hdi` mirror, then runs Fridge, adaptive Lasso, SCAD, and SuSiE, followed by gene-level and correlation-group comparisons. This includes automatic lambda grids, ten-fold CV, a CV-selected Fridge path, and an optional 500-resample bootstrap at the selected tuning.
 
 The notebook needs internet access (solely to download the riboflavin data), the `example` Python dependencies, and **R with `ncvreg`**. In R, run `install.packages("ncvreg")`, then ensure `Rscript` is on your PATH. Downloads and R exchange files use temporary directories.
 
-The paper's reported `lam` value is converted to the package's normalized objective. Fresh package CV is reported separately because fold construction and one-SE implementation can change the selected parameters. Seeds and software versions are printed. This distinction avoids treating a fresh analysis as an exact reproduction of historical cached results.
+All models are fitted from scratch. Results may differ slightly from the manuscript because of different choices of tuning parameters. Seeds and software versions are recorded.
 
 ## Dependencies
 

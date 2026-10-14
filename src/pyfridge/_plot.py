@@ -28,7 +28,7 @@ def _lambda_scale(ax, lambdas, xscale):
 
 
 def plot_path_fridge(path, *, feature_names=None, features=None, scaled=True,
-                     ax=None, xscale="auto", legend=None):
+                     ax=None, xscale="auto", legend=None, trim_flat=True):
     """Plot coefficient trajectories against the Fridge penalty parameter.
 
     Parameters
@@ -53,6 +53,12 @@ def plot_path_fridge(path, *, feature_names=None, features=None, scaled=True,
     legend : bool or None, default=None
         Show predictor labels when True; hide them when False. None shows a
         legend for 1 to 12 displayed predictors to avoid a crowded large legend.
+
+    trim_flat : bool, default=True
+        Hide a trailing flat segment once all displayed coefficient trajectories
+        have five consecutive relative changes within 1e-6. Trim back to the
+        plateau onset, retaining at least two points. False shows the full path.
+        This affects plotting only and does not alter coefficients or lambdas.
 
     Returns
     -------
@@ -83,10 +89,23 @@ def plot_path_fridge(path, *, feature_names=None, features=None, scaled=True,
         if np.any(indices < 0) or np.any(indices >= p) or len(np.unique(indices)) != len(indices):
             raise ValueError("features must contain unique indices between 0 and n_features-1")
 
+    # Use one common endpoint so displayed trajectories remain aligned. 
+    # Trim only if every displayed coefficient has a confirmed flat trailing segment.
+    end = len(lambdas)
+    if trim_flat and indices.size:
+        trailing_changes = 0
+        for i in range(len(lambdas) - 1, 0, -1):
+            if not np.all(np.isclose(beta[i, indices], beta[i-1, indices],
+                                     rtol=1e-6, atol=0.0)):
+                break
+            trailing_changes += 1
+        if trailing_changes >= 5:
+            end = max(2, len(lambdas) - trailing_changes)
+
     ax = _axes(ax)
     _lambda_scale(ax, lambdas, xscale)
     for j in indices:
-        ax.plot(lambdas, beta[:, j], linewidth=1.5, label=str(names[j]))
+        ax.plot(lambdas[:end], beta[:end, j], linewidth=1.5, label=str(names[j]))
     ax.axhline(0, color="0.5", linewidth=0.7, linestyle=":", label="_zero")
     ax.set(xlabel=r"$\lambda$",
            ylabel="Coefficient (working units)" if scaled else "Coefficient (original units)")
@@ -97,7 +116,7 @@ def plot_path_fridge(path, *, feature_names=None, features=None, scaled=True,
 
 
 # Mark the global minimum and one-SE choice on their own m curves.
-def plot_cv_fridge(cv, *, ax=None, xscale="auto", show_se=True):
+def plot_cv_fridge(cv, *, ax=None, xscale="auto", show_se=True, trim_flat=True):
     """Plot mean CV errors with the global minimum and one-SE choices.
 
     Parameters
@@ -114,6 +133,11 @@ def plot_cv_fridge(cv, *, ax=None, xscale="auto", show_se=True):
     show_se : bool, default=True
         Shade mean fold MSE plus/minus one standard error around each curve.
         These bands describe fold variability; they are not confidence intervals.
+    trim_flat : bool, default=True
+        Hide the tail only after five consecutive mean-MSE changes are within
+        relative tolerance 1e-6. Once confirmed, trim back to the plateau
+        onset. Retain selection markers and full stored CV results.
+        False displays every point.
 
     Returns
     -------
@@ -139,6 +163,22 @@ def plot_cv_fridge(cv, *, ax=None, xscale="auto", show_se=True):
         grid = np.asarray(record["lambdas"])
         mean = np.asarray(record["mean_mse"])
         se = np.asarray(record["se_mse"])
+        
+        # Require five consecutive small changes in the trailing segment, at 
+        # relative tolerance 1e-6. Once confirmed, hide the redundant points 
+        # starting immediately after plateau onset. A flat region followed by a 
+        # renewed change is never trimmed.
+        end = len(mean)
+        if trim_flat:
+            trailing_changes = 0
+            for i in range(len(mean) - 1, 0, -1):
+                if not np.isclose(mean[i], mean[i-1], rtol=1e-6, atol=0.0):
+                    break
+                trailing_changes += 1
+            if trailing_changes >= 5:
+                # Confirmation points detect flatness but need not remain visible.
+                end = max(2, len(mean) - trailing_changes)
+        grid, mean, se = grid[:end], mean[:end], se[:end]
         line, = ax.plot(grid, mean, linewidth=1.5, label=f"m={m}")
         if show_se:
             ax.fill_between(grid, mean - se, mean + se, color=line.get_color(), alpha=0.12)

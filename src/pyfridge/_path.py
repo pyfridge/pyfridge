@@ -8,7 +8,7 @@ from scipy.linalg import solve
 
 from ._data import (prepare, validate_m, nonnegative, positive_int, vector,
                     ridge_start, resolve_weights)
-from ._penalty import penalty_derivatives
+from ._penalty import penalty_derivatives, threshold_factors
 from ._coordinate import _solve_cd, kkt_residual, _objective
 
 
@@ -213,11 +213,25 @@ def _lambda_grid(X, y, m, w, lambdas, n_steps, lambda_init, lambda_max, method):
     start = 1e-6 / (len(y) * max(m, 1)) if lambda_init is None else nonnegative(
         lambda_init, "lambda_init", positive=True)
 
-    # Use data scores for the automatic endpoint. Only m=0 admits the usual
-    # weighted-Lasso zero-fit threshold; for higher degrees this is a heuristic.
+    # For m>0 use the lambda max motivated from CV with unit weights
+    # and beta=0.001*ones, independently of adaptive fitting weights.
     if lambda_max is None:
-        scores = np.abs(X.T @ y / len(y))
-        end = float(np.max(scores / np.maximum(w, 1e-12))) if m == 0 else float(np.max(scores))
+        if m == 0:
+            scores = np.abs(X.T @ y / len(y))
+            end = float(np.max(scores / np.maximum(w, 1e-12)))
+        elif m == X.shape[1]:
+            # P_p vanishes, so an unpenalized path needs one point.
+            end = start
+        else:
+            # Equal beta=0.001 give choose(p-1,m)*0.001**m.
+            # Avoids overflow in the combinatorial denominator.
+            import math
+            score = float(np.max(np.abs(X).T @ np.abs(y - np.mean(y)) / len(y)))
+            log_denominator = math.log(math.comb(X.shape[1] - 1, m)) + m * math.log(0.001)
+            log_endpoint = math.log(score) - log_denominator if score > 0 else -np.inf
+            end = (float(np.sqrt(np.finfo(float).max))
+                   if log_endpoint > math.log(np.finfo(float).max)
+                   else math.exp(log_endpoint))
     else:
         end = nonnegative(lambda_max, "lambda_max")
 
@@ -271,8 +285,13 @@ def path_fridge(X, y, m=1, lambdas=None, *, method="smooth", weights=None,
         Positive starting multiplier for automatic grids. None uses
         1e-6/(n_samples*max(m,1)); ignored for explicit lambdas.
     lambda_max : float or None, default=None
-        Nonnegative endpoint for automatic grids. None uses a score-based heuristic; for
-        m>0 this is not a guaranteed all-zero-fit bound. Ignored for explicit lambdas.
+        Nonnegative endpoint for automatic grids. None uses the weighted-Lasso
+        score threshold for m=0. For 0<m<n_features it uses the manuscript
+        heuristic with unit weights and beta=0.001*ones, regardless of fitting
+        weights: max_j(abs(X_j).T @ abs(y-y.mean())/n) divided by
+        choose(n_features-1,m)*0.001**m. Overflow uses sqrt(finfo(float).max).
+        For m=n_features the automatic path contains only its initial point.
+        Ignored for explicit lambdas; this is not a support-size guarantee.
     correction_steps : int, default=2
         Maximum positive number of repeated LQA corrections after each smooth predictor
         step; early stopping may use fewer.
@@ -373,7 +392,25 @@ def path_fridge(X, y, m=1, lambdas=None, *, method="smooth", weights=None,
     backend_used = "numpy"
 
     # Advance through the lambda grid, warm-starting each point from the previous coefficients.
+    # ##### IMPROVEMENT: Cache an invariant smooth-path tail only when its
+    # support has size <=m and corrections would stop immediately. A flat
+    # objective or CV error alone does not establish this condition.
+    frozen_tail = None
     for index, lam in enumerate(grid):
+        if frozen_tail is not None:
+            loss_grad, factors, fixed_value = frozen_tail
+            # ##### IMPROVEMENT: Predictions are fixed, but inactive KKT
+            # thresholds still depend on lambda, so update diagnostics.
+            violation = np.maximum(np.abs(loss_grad) - lam * factors, 0.0)
+            active_mask = beta != 0
+            violation[active_mask] = np.abs(loss_grad[active_mask])
+            error = float(np.max(violation))
+            paths.append(beta.copy())
+            errors.append(error)
+            checks.append(error <= target)
+            objectives.append(fixed_value)
+            iterations.append(0)
+            continue
         steps = 0
         if method == "smooth":
 
@@ -434,6 +471,18 @@ def path_fridge(X, y, m=1, lambdas=None, *, method="smooth", weights=None,
         checks.append(ok)
         objectives.append(_objective(X, y, beta, m, float(lam), w, tau))
         iterations.append(steps)
+
+        # ##### IMPROVEMENT: With <=m surviving coordinates P_m and its
+        # active gradient vanish. If the restricted loss gradient already
+        # meets the corrector tolerance, all later predictor/corrector steps
+        # are inert. This shortcut is disabled when CD can reintroduce genes.
+        if method == "smooth" and not polish and np.count_nonzero(beta) <= m:
+            remaining = np.flatnonzero(beta)
+            restricted_grad = (X[:, remaining].T @ (X[:, remaining] @ beta[remaining] - y) / n
+                               + tau * beta[remaining])
+            if np.max(np.abs(restricted_grad), initial=0.0) <= tol:
+                loss_grad = X.T @ (X @ beta - y) / n + tau * beta
+                frozen_tail = (loss_grad, threshold_factors(beta, m, w), objectives[-1])
 
         # Early support-based termination applies only to automatic smooth grids.
         # User-specified grids must preserve every requested lambda point.
